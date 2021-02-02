@@ -1,7 +1,7 @@
 # streamf-testing
 A bunch of testing files for METU CENG536 Fall"20 Homework 3, a Linux kernel character device driver, basically a horrible bash script and its friends!
 
-To use it, clone the repository into your working directory and then just run the script!
+To use it, clone the repository into your working directory containing your module loading scripts and then just run the script!
 
 ```sh
 git clone https://github.com/denizmsayin/streamf-testing
@@ -23,7 +23,9 @@ The names/directories etc. can be modified with some flags present at the top of
 
 ### Details about the tests
 
-Although there are quite a few tests, they are pretty basic and are by no extensive at all since there are so many possible things that can be done with the filters and devices.
+Although there are quite a few tests, they are pretty basic and are by no means extensive at all since there are so many possible things that can be done with the filters and devices.
+
+* Many of the filtering tests contain 20 character words. This is problematic since the `struct filter_struct` also only has space for 20 bytes, meaning that no null byte can be added at the end, which means that stuff like `strcmp` will not work. Either add extra provisions for this case (using limited versions `strn*`) or change your filter structure (along with the filter structure in `filter_cntl.c`) to have space for 21 bytes instead of 20.
 
 * For most tests, the script stops in case the test fails since there are state changes that need to be consistent between tests. Feel free to comment some tests out inside the script though, it should be pretty easy to see what is where.
 
