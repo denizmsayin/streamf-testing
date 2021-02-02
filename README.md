@@ -25,6 +25,8 @@ The names/directories etc. can be modified with some flags present at the top of
 
 Although there are quite a few tests, they are pretty basic and are by no means extensive at all since there are so many possible things that can be done with the filters and devices.
 
+* Many of the filtering tests contain 20 character words. This is problematic since the `struct filter_struct` also only has space for 20 bytes, meaning that no null byte can be added at the end, which means that stuff like `strcmp` will not work. Either add extra provisions for this case (using limited versions `strn*`) or change your filter structure (along with the filter structure in `filter_cntl.c`) to have space for 21 bytes instead of 20.
+
 * For most tests, the script stops in case the test fails since there are state changes that need to be consistent between tests. Feel free to comment some tests out inside the script though, it should be pretty easy to see what is where.
 
 * There are no real parallel tests, at most 1 reader & 1 writer work concurrently when testing with big files. Cases with multiple readers or multiple writers do not exist, most operations are sequential.
