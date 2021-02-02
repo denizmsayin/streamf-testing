@@ -1,0 +1,399 @@
+#! /bin/bash
+
+LOADER_PREFIX=streamf
+DEVICE_PREFIX=streamf
+
+# How much can your device take? If this is set,
+# I'll assume bufsize bytes as should be. Unset
+# and I'll assume bufsize-1 bytes. Important when
+# testing polling.
+DEV_CAN_FULL=1
+
+# Seconds to sleep between tests if you want to slow
+# down the output a little
+TEST_WAIT=0 # set e.g. 0.2 for 200 ms
+
+# This sets one of the later tests using a 64MB
+# bufsize. Since it takes while, you can disable it
+# (set to 0) from here after you're confident it works.
+BIG_BUF_TEST=1
+
+
+#####################
+
+LOADER="$LOADER_PREFIX"_load
+UNLOADER="$LOADER_PREFIX"_unload
+
+AUTHOR=Deniz
+BLK_TIMEOUT=5s
+SECTION_HEADER_SIZE=80
+FILTER_CNTL=filter_cntl
+POLL_DEV=poll_device
+MAN_TIMEOUT=20s
+BIG_BUF_TIMEOUT=30s
+POLL_TIMEOUT=5
+
+EXPECTED_DUMP=scripted_test_expected.txt
+OUTPUT_DUMP=scripted_test_output.txt
+
+TMP0=$(mktemp)
+TMP1=$(mktemp)
+TMP2=$(mktemp)
+
+PASSED=0
+FAILED=0
+TOTAL=0
+RELOAD_EVERY=0
+
+# Since there is a massive bunch of functions, I 
+# lazily put them all in another file (0 organization)
+# so that it becomes easier to read and find the test cases
+source stest_lib.sh
+
+prepare_c_utils
+
+if [[ $RELOAD_EVERY != 1 ]]; then
+  echo "Loading module using $LOADER..."
+  load_module
+fi
+
+trap cleanup EXIT
+
+
+
+section_begin "BASIC (FIFO-LIKE) TESTS"
+echo "These tests keep using device 0, make sure you update properly if they fail unexpectedly!"
+echo
+
+testcase $'Can your device pass a word of length 5?\n'
+string_test_same 0 "booya"
+
+testcase $'How about a bunch of words?\n'
+string_test_same 0 "hello world how's it going"
+
+testcase $'What if there was like, lots of whitespace instead of 1 char as separators?\n'
+string_test_same 0 $'aa         b\t\n here  goes \t   some \n\n whitespace'
+
+testcase $'Now, exactly 4095 random alphanumeric/whitespace characters!\n'
+rand_string 4095 > "$TMP0"
+string_test_same 0 "$(<$TMP0)"
+
+testcase $'How about 4095 random BYTES?!\n'
+head -c 4095 /dev/urandom > "$TMP0"
+file_test_same 0 "$TMP0"
+
+testcase "Time for a more difficult 'basic' test! "
+man_ascii bash > $TMP0
+man_size=$(file_size $TMP0)
+echo -n "'man bash' will be passed through your device"
+echo -n " in blocks of 4095 and we'll see if it gets to" 
+echo -n " the other side correctly! The whole manual is"
+echo " a whopping $man_size bytes, by the way. Here we go!"
+big_file_test 0 $TMP0 $TMP1 $TMP0 # device file outfile expected
+
+section_end
+
+
+
+section_begin "FILTER STACK LIMITS"
+echo "We're just gonna push and pop a bunch of uppercase filters to ensure limits."
+echo "These tests are going to use device 2."
+echo
+
+echo "Gotta make sure empty pops fails first!"
+testcase $'Does pop from the write filter fail?..\n'
+filter_cntl_test 1 2 w pop  # expected_ret device_no *args
+testcase $'Does pop from the read filter fail?..\n'
+filter_cntl_test 1 2 r pop
+
+testcase $'Can we push 10 filters without failing?\n'
+filter_wpush_n_test 2 10
+
+testcase $'Now, pushing another one should fail.\n'
+filter_cntl_test 1 2 w push upper
+
+testcase $'Now, let\'s reset the filter!\n'
+filter_cntl_test 0 2 w reset
+
+testcase $'The call succeeded, but can we push 10 filters again to make sure?\n'
+filter_wpush_n_test 2 10
+
+echo "Great, let's reset the filters and move on."
+filter_cntl 2 w reset || fail
+filter_cntl 2 r reset || fail
+
+section_end
+
+
+
+section_begin "CHARACTER FILTERING"
+echo "This time we'll just uppercase and lowercase the ls manual. It's around 8K."
+echo "Also, let's switch to device 1 for a change."
+echo
+
+testcase $'Let\'s add an uppercase write filter and filter man ls!\n'
+filter_cntl 1 w push upper || fail
+man_ascii ls > $TMP0
+tr [:lower:] [:upper:] < $TMP0 > $TMP2
+big_file_test 1 $TMP0 $TMP1 $TMP2
+
+testcase $'What if I popped the filter and did it again (without filters) to be sure?\n'
+filter_cntl 1 w pop || fail
+big_file_test 1 $TMP0 $TMP1 $TMP0
+
+testcase $'Good. Now, let\'s add it back with a lowercase read filter and do it again!\n'
+filter_cntl 1 w push upper || fail
+filter_cntl 1 r push lower || fail
+tr [:upper:] [:lower:] < $TMP0 > $TMP2
+big_file_test 1 $TMP0 $TMP1 $TMP2
+
+echo "Let's get rid of the filters before finishing up:"
+filter_cntl 1 w pop || fail
+filter_cntl 1 r pop || fail
+echo
+
+section_end
+
+
+
+section_begin "WORD FILTERING"
+echo "Now, it's time to do some word filtering. Hopefully it won't be too bad..."
+echo "This time, we'll use device 3 just to be annoying!"
+echo
+
+testcase $'First, a basic test with a write censor filter.\n'
+filter_cntl 3 w push censor bigword || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "What am I ******* even doing at this ******* hour? I ******* swear..." 
+
+testcase $'Looking good. What if we split words with lots of whitespace?\n'
+string_test 3 $'bigword    hello\n bigword\n\n\n bybye\t\t  \t bigword'\
+              $'*******    hello\n *******\n\n\n bybye\t\t  \t *******'
+
+testcase $'Great! Let\'s add a same length write substitution filter for "decensoring"\n'
+filter_cntl 3 w push subs '*******' "flowers" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "What am I flowers even doing at this flowers hour? I flowers swear..." 
+
+testcase $'Time to take it up a notch. I\'m stacking some filters for shortening the words.\n'
+filter_cntl 3 w push subs "What" "eve" || fail
+filter_cntl 3 w push subs "doing" "eve" || fail
+filter_cntl 3 w push subs "this" "eve" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "eve am I flowers even eve at eve flowers hour? I flowers swear..." 
+
+testcase $'Now I\'ll make the words even shorter!\n'
+filter_cntl 3 w push subs "eve" "E" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "E am I flowers even E at E flowers hour? I flowers swear..." 
+
+# NOTE: A note about full size! Observe that the filter struct definition contains
+# only 20 chars, yet we're supposed to support up to 20 chars too. My filter_cntl
+# program does NOT put a null at the end of the string when 20 characters get
+# written (it does otherwise). If your program does not have special provisions 
+# for that, it may # fail. Or, you can also change MAX_WORD_SIZE to 21 (in filter_cntl.c) 
+# if that's how you implemented it!
+
+testcase $'Now let\'s EXPAND THE SHORTENED (1) WORDS INTO FULL SIZE (20)!\n'
+filter_cntl 3 w push subs "E" "abcdefghijklmnopqrst" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "abcdefghijklmnopqrst am I flowers even abcdefghijklmnopqrst at abcdefghijklmnopqrst flowers hour? I flowers swear..." 
+
+testcase $'That\'s it for writing for now. Let\'s add a censor to read.\n'
+filter_cntl 3 r push censor "flowers" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "abcdefghijklmnopqrst am I ******* even abcdefghijklmnopqrst at abcdefghijklmnopqrst ******* hour? I ******* swear..." 
+
+testcase $'Goodie. How about shortening the read words?\n'
+filter_cntl 3 r push subs '*******' "XXX" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "abcdefghijklmnopqrst am I XXX even abcdefghijklmnopqrst at abcdefghijklmnopqrst XXX hour? I XXX swear..." 
+
+testcase $'Uhhh... Well, enlarge the read words again? Why not!\n'
+filter_cntl 3 r push subs "XXX" "haskelliscomingbacks" || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "abcdefghijklmnopqrst am I haskelliscomingbacks even abcdefghijklmnopqrst at abcdefghijklmnopqrst haskelliscomingbacks hour? I haskelliscomingbacks swear..." 
+
+testcase $'Wow. You\'ve come pretty far... That makes me happy since it increases my chances of having written correct code L0L. Just a final CAPS filter for the hell of it!\n'
+filter_cntl 3 r push upper || fail
+string_test 3 "What am I bigword even doing at this bigword hour? I bigword swear..."\
+              "ABCDEFGHIJKLMNOPQRST AM I HASKELLISCOMINGBACKS EVEN ABCDEFGHIJKLMNOPQRST AT ABCDEFGHIJKLMNOPQRST HASKELLISCOMINGBACKS HOUR? I HASKELLISCOMINGBACKS SWEAR..."
+
+echo "Alright... You're a real boss m8, I'm removing the filters now!"
+filter_cntl 3 w reset || fail
+filter_cntl 3 r reset || fail
+echo "Filters reset."
+echo
+
+testcase $'Buuut, we\'re not done yet! Does your device break words on 20 chars?\n'
+filter_cntl 3 w push subs "theslyflowjumpsovert" "broken" || fail
+filter_cntl 3 w push subs "helazydog" "word" || fail
+string_test 3 "theslyflowjumpsoverthelazydog theslyflowjumpsoverthelazydog"\
+              "brokenword brokenword"
+
+testcase $'Now, the long words have been substituted, but they should not be re-combined before being written to the pipe (to prevent explosions as stated by Onur hoca)! Let\'s test that.\n'
+filter_cntl 3 w push subs "brokenword" "youdontwantthisword" || fail
+string_test 3 "theslyflowjumpsoverthelazydog theslyflowjumpsoverthelazydog"\
+              "brokenword brokenword"
+
+testcase $'However, the new words should still be re-tokenized when read. How about that?\n'
+filter_cntl 3 r push subs "brokenword" "youDOwantthisword" || fail
+string_test 3 "theslyflowjumpsoverthelazydog theslyflowjumpsoverthelazydog"\
+              "youDOwantthisword youDOwantthisword"
+
+echo "Okay, now I\'m convinced. Your device WORKS! Mission passed, respect++ 'n all that!"
+filter_cntl 3 w reset || fail
+filter_cntl 3 r reset || fail
+echo "While you were busy reading my last message, I just reset the filters again! Sneaky :)"
+echo
+
+section_end
+
+
+
+section_begin "XOR TESTS (EXPERIMENTAL...)"
+echo -n "Now I'm going to run some XOR tests. They're pretty arbitrary if you ask me"
+echo -n " due to all the generated whitespace and null bytes and all that, but I have to"
+echo    " do it anyway, right? Just a few basic ones, let's see if we match! Device 3 again."
+echo
+
+testcase $'Hey, listen to this. What if I xor\'d a word with itself, replacing the word with null bytes? Go go go!\n'
+filter_cntl 3 w push xor societalissues societalissues || fail # we did it boys! XYZ is no more..
+# going to need files and some surgery with dd since bash strings don't like zeros
+echo " societalissues  societalissues  some other words   np np" > $TMP0
+cp $TMP0 $TMP1
+dd if=/dev/zero of=$TMP1 count=14 bs=1 seek=1 conv=notrunc status=none
+dd if=/dev/zero of=$TMP1 count=14 bs=1 seek=17 conv=notrunc status=none
+file_test 3 $TMP0 $TMP1
+
+testcase $'Now, let\'s test a short cypher with some random stuff...\n'
+# filter_cntl 3 w pop || fail
+filter_cntl 3 w push xor "i'mthebattman" "c0d3" || fail
+# hey, I'm not going to create extra files just for a few cases you know?
+# I'll just HARDCODE THE BYTEZ like REAL PROS do. Hmph :)
+echo "hello do you know who I am? i'mthebattman ! You heard me, i'mthebattman" > $TMP0
+printf 'hello do you know who I am? \n\x17\tG\x0bU\x06R\x17D\tR\r ! You heard me, \n\x17\tG\x0bU\x06R\x17D\tR\r\n' > $TMP1
+file_test 3 $TMP0 $TMP1
+
+testcase $'Finally, a longer cipher applied on read...\n'
+filter_cntl 3 r push xor "hellobroski" "ohhellnoimahusky"
+echo $'hellobroski I\'m skillfully dodging the other xor filters hahaha :3 hellobroski\thellobroski' > $TMP0
+printf '\x07\r\x04\t\x03\x0e\x1c\x00\x1a\x06\x08 I'"'"'m skillfully dodging the other xor filters hahaha :3 \x07\r\x04\t\x03\x0e\x1c\x00\x1a\x06\x08\t\x07\r\x04\t\x03\x0e\x1c\x00\x1a\x06\x08\n' > $TMP1
+file_test 3 $TMP0 $TMP1
+
+section_end
+
+
+
+section_begin "POLL TEST"
+echo "Just a few very very basic poll tests here. Device 2."
+echo
+
+testcase $'Initially the device should be available for writing only. Is it?\n'
+poll_test 2 0 1 # devno expected_read expected_write
+
+testcase $'Let\'s write one byte to your device. Now it should be available for both.\n'
+io_poll_test 1 1 2 1 1 # in n devno eread ewrite, I really should use strings this is unreadable!
+
+testcase $'Let\'s write some more bytes. Should be the same.\n'
+io_poll_test 1 3070 2 1 1
+
+testcase $'What if we filled the buffer? Then it should only be available for reading.\n'
+if [[ $DEV_CAN_FULL != 0 ]]; then
+  io_poll_test 1 1025 2 1 0
+else
+  io_poll_test 1 1024 2 1 0
+fi
+
+testcase $'Empty it again? It should only be available for writing afterwards.\n'
+if [[ $DEV_CAN_FULL != 0 ]]; then
+  io_poll_test 0 4096 2 0 1
+else
+  io_poll_test 0 4095 2 0 1
+fi
+
+section_end
+
+
+
+section_begin "MODULE SETTINGS TEST"
+echo "Alright, now I'll unload your module and try to run it with different settings."
+echo
+
+unload_module
+testcase $'Starting off with a larger buffer size, 8K for example! Can I pass 8191 bytes without blocking?\n'
+load_module bufsize=8192
+rand_string 8191 > "$TMP0"
+file_test_same 0 $TMP0
+
+if [[ $BIG_BUF_TEST == 1 ]]; then
+  unload_module
+  testcase $'How about something BIG? Like a 64MB buffer? Passing bufsize-1 bytes again. Might wanna compile without debug or increase timeout (BIG_BUF_TIMEOUT) if this times out. You can also disable this test through the BIG_BUF_TEST flag at the top.\n'
+  # Let's hackily increase the timeout here a little
+  tmp=$BLK_TIMEOUT
+  BLK_TIMEOUT=$BIG_BUF_TIMEOUT
+  
+  load_module bufsize=67108864
+  
+  start_time=$(date +%s.%N) # time it too!
+  rand_string 67108863 > "$TMP0"
+  elapsed=$(bc <<< "scale=10; $(date +%s.%N) - $start_time")
+  printf 'Generating data took around %.2f seconds\n' "$elapsed"
+  
+  start_time=$(date +%s.%N) # time it too!
+  file_test_same 0 $TMP0
+  elapsed=$(bc <<< "scale=10; $(date +%s.%N) - $start_time")
+  echo -ne "\033[1A" # terminal code to move up one line, a bit hacky
+  printf 'Passing through the device took around %.2f seconds\n\n' "$elapsed"
+
+  BLK_TIMEOUT=$tmp
+fi
+
+unload_module
+echo $'Nice! Now let\'s try to load the module with 128 devices and 16KB. bufsize-1 bytes.\n'
+load_module numminors=128 bufsize=16384
+rand_string 16383 > "$TMP0"
+testcase $'Does device 0 work?\n'
+file_test_same 0 $TMP0
+testcase $'Does device 5 work?\n'
+file_test_same 5 $TMP0
+testcase $'Does device 36 work?\n'
+file_test_same 36 $TMP0
+testcase $'Does device 127 work?\n'
+file_test_same 127 $TMP0
+
+section_end
+
+# なかなかいいですね！
+
+section_begin "EXTRAS (Not very necessary...)"
+echo -n "Some extra tests for fun, not very necessary, but in the ~lightly~ part of"
+echo    " the constraints! A different device for each test (0,1,2)."
+echo
+
+unload_module
+load_module
+
+FAIL_ON_TEST=0 # cancel blocking
+
+testcase $'Can your device pass exactly bufsize bytes without blocking?\n'
+rand_string 4096 > "$TMP0"
+file_test_same 0 $TMP0
+
+testcase $'Can your device be read with size > bufsize? Let\'s try to read the whole bash manual at once this time!\n'
+man_ascii bash > $TMP0
+big_file_test 1 $TMP0 $TMP1 $TMP0 1 # device file outfile expected read_once
+
+testcase $'Does your device return an error when writing > bufsize?\n'
+fail_write_test 2
+
+section_end
+
+cat<<EOF
+
+Passed $PASSED/$TOTAL tests in total!
+That was quite the adventure! Time to congratulate ourselves I guess =D
+See you around!
+
+EOF
+
