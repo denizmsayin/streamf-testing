@@ -4,11 +4,15 @@ fail() {
 }
 
 load_module() {
+  cd "$LOADER_DIR"
   sudo "./$LOADER" $* || fail "Failed to load module."
+  cd "$CWD"
 }
 
 unload_module() {
+  cd "$LOADER_DIR"
   sudo "./$UNLOADER" || fail "Failed to unload module"
+  cd "$CWD"
 }
 
 man_ascii() {
@@ -18,6 +22,7 @@ man_ascii() {
 
 cleanup() {
   rm -f "$TMP0" "$TMP1" "$TMP2"
+  cd "$LOADER_DIR"
   sudo "./$UNLOADER" &> /dev/null && echo "Module unloaded."
 }
 

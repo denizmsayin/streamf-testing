@@ -1,0 +1,4 @@
+filter_cntl
+poll_device
+*.swp
+*.txt
