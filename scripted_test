@@ -38,10 +38,6 @@ POLL_TIMEOUT=5
 EXPECTED_DUMP=scripted_test_expected.txt
 OUTPUT_DUMP=scripted_test_output.txt
 
-TMP0=$(mktemp)
-TMP1=$(mktemp)
-TMP2=$(mktemp)
-
 PASSED=0
 FAILED=0
 TOTAL=0
@@ -58,6 +54,10 @@ if [[ $RELOAD_EVERY != 1 ]]; then
   echo "Loading module using $LOADER..."
   load_module
 fi
+
+TMP0=$(mktemp)
+TMP1=$(mktemp)
+TMP2=$(mktemp)
 
 trap cleanup EXIT
 
@@ -369,8 +369,8 @@ section_end
 # なかなかいいですね！
 
 section_begin "EXTRAS (Not very necessary...)"
-echo -n "Some extra tests for fun, not very necessary, but in the ~lightly~ part of"
-echo    " the constraints! A different device for each test (0,1,2)."
+echo -n "Some extra tests for fun, not very necessary, but ~slightly~ part of"
+echo    " the constraints! A different device for each test (0, 1, 2)."
 echo
 
 unload_module
