@@ -1,7 +1,8 @@
 #! /bin/bash
 
-LOADER_PREFIX=streamf
-DEVICE_PREFIX=streamf
+LOADER_DIR='..'       # assuming cloned into main repo, can change
+LOADER_PREFIX=streamf # XX_load XX_unload should be script names
+DEVICE_PREFIX=streamf # going to look for /dev/XX0 /dev/XX1 /dev/XX125 etc.
 
 # How much can your device take? If this is set,
 # I'll assume bufsize bytes as should be. Unset
@@ -21,8 +22,8 @@ BIG_BUF_TEST=1
 
 #####################
 
-LOADER="$LOADER_PREFIX"_load
-UNLOADER="$LOADER_PREFIX"_unload
+LOADER="$LOADER_DIR/$LOADER_PREFIX"_load
+UNLOADER="$LOADER_DIR/$LOADER_PREFIX"_unload
 
 AUTHOR=Deniz
 BLK_TIMEOUT=5s
