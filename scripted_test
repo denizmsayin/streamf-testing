@@ -96,7 +96,6 @@ big_file_test 0 $TMP0 $TMP1 $TMP0 # device file outfile expected
 section_end
 
 
-
 section_begin "FILTER STACK LIMITS"
 echo "We're just gonna push and pop a bunch of uppercase filters to ensure limits."
 echo "These tests are going to use device 2."
@@ -384,7 +383,7 @@ file_test_same 0 $TMP0
 
 testcase $'Can your device be read with size > bufsize? Let\'s try to read the whole bash manual at once this time!\n'
 man_ascii bash > $TMP0
-big_file_test 1 $TMP0 $TMP1 $TMP0 1 # device file outfile expected read_once
+big_file_test 1 $TMP0 $TMP1 $TMP0 0 # device file outfile expected read_blk
 
 testcase $'Does your device return an error when writing > bufsize?\n'
 fail_write_test 2

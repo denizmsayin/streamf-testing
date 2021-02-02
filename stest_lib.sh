@@ -303,21 +303,17 @@ file_test_same() {
 }
 
 big_file_test_f() {
-  local device=$(gdev "$1") file="$2" outfile="$3" expected="$4" ret read_once=0
-
-  if [ "$#" == 5 ]; then
-    read_once="$5"
-  fi
+  local device=$(gdev "$1") file="$2" outfile="$3" expected="$4" ret read_blk="$5"
 
   timeout -k 5s $MAN_TIMEOUT dd if="$file" of="$device" bs=4095 status=none & # background job to write
   wrpid=$!
 
   # start the reader with timeout
   local fs=$(file_size "$expected")
-  if [[ $read_once != 0 ]]; then
-    head -c "$fs" "$device" > "$outfile"
-  else
+  if [[ $read_blk != 0 ]]; then
     timeout -k 5s $MAN_TIMEOUT dd if="$device" of="$outfile" bs=4095 iflag=count_bytes count=$fs status=none
+  else
+    head -c "$fs" "$device" > "$outfile"
   fi
   ret=$?
   if [[ $ret == 124 ]]; then
