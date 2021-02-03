@@ -216,7 +216,9 @@ string_test_f() {
     return $ERRNUM_RTOUT
   fi
   if ! [[ "$expected" == "$(<$TMP0)" ]]; then
-    return $ERRNUM_MISMATCH
+    ln -f $TMP0 "$OUTPUT_DUMP"
+    printf '%s' "$expected" > "$EXPECTED_DUMP"
+    return $ERRNUM_FLMMATCH
   fi
   return 0
 }

@@ -22,6 +22,9 @@ BIG_BUF_TEST=1
 
 #####################
 
+# Set the numeric locale to prevent weird , . float separator bugs
+LC_NUMERIC="en_US.UTF-8"
+
 CWD=$(pwd -P)
 LOADER="$LOADER_PREFIX"_load
 UNLOADER="$LOADER_PREFIX"_unload
